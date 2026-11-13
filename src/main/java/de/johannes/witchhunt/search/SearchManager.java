@@ -16,7 +16,6 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.ChunkStatus;
 import net.minecraft.world.gen.chunk.placement.RandomSpreadStructurePlacement;
-import net.minecraft.world.gen.chunk.placement.StructurePlacement;
 import net.minecraft.world.gen.structure.Structure;
 import net.minecraft.world.gen.structure.StructureKeys;
 
@@ -104,7 +103,7 @@ public final class SearchManager {
         }
         SearchSession s = active;
         source.sendFeedback(() -> Text.literal("Witch Hunt aktiv. Untersuchte Startregionen: "
-                + s.checkedRegions + ", bisherige Witch-Hut-Kandidaten: " + s.checkedCandidates
+                + s.checkedChunks + ", bisherige Witch-Hut-Kandidaten: " + s.checkedCandidates
                 + ". Suchzentrum: X " + s.originX + ", Z " + s.originZ + "."), false);
         return 1;
     }
@@ -124,11 +123,12 @@ public final class SearchManager {
         private final PriorityQueue<RegionNode> queue = new PriorityQueue<>();
         private final Set<RegionKey> queued = new HashSet<>();
 
-        private long checkedRegions;
+        private long checkedChunks;
         private long checkedCandidates;
         private boolean finished;
         private long bestDistanceSquared = Long.MAX_VALUE;
         private SearchResult best;
+        private Integer bestY = null;
 
         private SearchSession(ServerCommandSource source, ServerWorld world, Structure hut,
                               RandomSpreadStructurePlacement placement, long seed,
@@ -159,28 +159,44 @@ public final class SearchManager {
 
             // Every unvisited region has a lower-bound distance at least this large.
             // Once that lower bound exceeds the best candidate's distance, the result is globally nearest.
-            if (best != null && next.lowerBoundDistanceSquared() > bestDistanceSquared) {
+            if (best != null && next.lowerBoundDistanceSquared() > bestDistanceSquared && best.centerY() <= -40) {
                 finishWithResult();
                 return;
             }
 
             RegionNode node = queue.poll();
-            checkedRegions++;
+            checkedChunks++;
 
             ChunkPos start = placement.getStartChunk(seed, node.x(), node.z());
             Chunk chunk = world.getChunk(start.x, start.z, ChunkStatus.STRUCTURE_STARTS, true);
 
             if (chunk != null) {
-                checkedCandidates++;
                 StructureStart structureStart = chunk.getStructureStart(hut);
 
                 if (structureStart != null && structureStart.hasChildren()) {
+                    checkedCandidates++;
                     BlockBox box = structureStart.getBoundingBox();
-                    int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
-                    int centerY = Math.floorDiv(box.getMinY() + box.getMaxY(), 2);
-                    int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
+                    int centerY = box.getMaxY();
 
-                    if (centerY < 0) {
+                    if (bestY == null || centerY < bestY) {
+
+                        int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
+                        int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
+
+                        long dx = (long) centerX - originX;
+                        long dz = (long) centerZ - originZ;
+                        long distanceSquared = dx * dx + dz * dz;
+
+                        best = new SearchResult(centerX, centerY, centerZ,
+                                box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY(),
+                                box.getMinZ(), box.getMaxZ(), distanceSquared);
+
+                        printResult(best);
+                    }else if (centerY == bestY) {
+
+                        int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
+                        int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
+
                         long dx = (long) centerX - originX;
                         long dz = (long) centerZ - originZ;
                         long distanceSquared = dx * dx + dz * dz;
@@ -190,6 +206,8 @@ public final class SearchManager {
                             best = new SearchResult(centerX, centerY, centerZ,
                                     box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY(),
                                     box.getMinZ(), box.getMaxZ(), distanceSquared);
+
+                            printResult(best);
                         }
                     }
                 }
@@ -200,8 +218,8 @@ public final class SearchManager {
             addRegion(node.x(), node.z() - 1);
             addRegion(node.x(), node.z() + 1);
 
-            if (checkedRegions % 100 == 0) {
-                long count = checkedRegions;
+            if (checkedChunks % 1000 == 0) {
+                long count = checkedChunks;
                 source.sendFeedback(() -> Text.literal("Witch Hunt: " + count
                         + " Startregionen untersucht; " + checkedCandidates + " Kandidaten geprüft."), false);
             }
@@ -228,13 +246,17 @@ public final class SearchManager {
         private void finishWithResult() {
             finished = true;
             SearchResult r = best;
+            printResult(r);
+            active = null;
+        }
+
+        private void printResult(SearchResult r){
             source.sendFeedback(() -> Text.literal("Witch Hut gefunden! Mittelpunkt: X "
                     + r.centerX() + ", Y " + r.centerY() + ", Z " + r.centerZ()
                     + " | Bounding Box: X " + r.minX() + ".." + r.maxX()
                     + ", Y " + r.minY() + ".." + r.maxY()
                     + ", Z " + r.minZ() + ".." + r.maxZ()
-                    + " | Untersuchte Startregionen: " + checkedRegions), false);
-            active = null;
+                    + " | Untersuchte Startregionen: " + checkedChunks), false);
         }
 
         private void finishWithoutResult() {
