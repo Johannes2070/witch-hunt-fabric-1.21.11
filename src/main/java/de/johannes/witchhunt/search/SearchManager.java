@@ -122,11 +122,10 @@ public final class SearchManager {
         private final int originChunkZ;
         private final int spacing;
 
-        private static final int MAX_PENDING_CHUNKS = 16;
-
         private final PriorityQueue<RegionNode> queue = new PriorityQueue<>();
         private final Set<RegionKey> queued = new HashSet<>();
-        private final Map<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>> pendingChunks =new HashMap<>();
+        private final Map<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>> pendingChunksFeature =new HashMap<>();
+        private final Map<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>> pendingChunksStructure =new HashMap<>();
 
         private long checkedChunks;
         private long checkedCandidates;
@@ -173,11 +172,11 @@ public final class SearchManager {
         }
 
         private void processCompletedChunks() {
-            Iterator<Map.Entry<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>>> iterator =
-                    pendingChunks.entrySet().iterator();
+            Iterator<Map.Entry<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>>> iteratorStruct =
+                    pendingChunksStructure.entrySet().iterator();
 
-            while (iterator.hasNext()) {
-                var entry = iterator.next();
+            while (iteratorStruct.hasNext()) {
+                var entry = iteratorStruct.next();
 
                 CompletableFuture<OptionalChunk<Chunk>> future = entry.getValue();
 
@@ -193,7 +192,7 @@ public final class SearchManager {
                             + " Startregionen untersucht; " + checkedCandidates + " Kandidaten geprüft."), false);
                 }
 
-                iterator.remove();
+                iteratorStruct.remove();
 
                 try {
                     OptionalChunk<Chunk> optional = future.join();
@@ -206,10 +205,38 @@ public final class SearchManager {
                     ));
                 }
             }
+
+            Iterator<Map.Entry<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>>> iteratorFeature =
+                    pendingChunksFeature.entrySet().iterator();
+
+            while (iteratorFeature.hasNext()) {
+                var entry = iteratorFeature.next();
+
+                CompletableFuture<OptionalChunk<Chunk>> future = entry.getValue();
+
+                if (!future.isDone()) {
+                    continue;
+                }
+
+                iteratorFeature.remove();
+
+                try {
+                    OptionalChunk<Chunk> optional = future.join();
+
+                    optional.ifPresent(this::CheckChunkHight);
+
+                } catch (CompletionException exception) {
+                    source.sendError(Text.literal(
+                            "Fehler beim Laden eines Chunks: " + exception.getMessage()
+                    ));
+                }
+            }
         }
 
+        private static final int TARGET_PENDING_CHUNKS = 100;
+
         private void submitChunkRequests() {
-            while (pendingChunks.size() < MAX_PENDING_CHUNKS && !queue.isEmpty()) {
+            while (pendingChunksStructure.size() < TARGET_PENDING_CHUNKS && !queue.isEmpty()) {
                 RegionNode node = queue.poll();
 
                 addRegion(node.x() - 1, node.z());
@@ -223,12 +250,12 @@ public final class SearchManager {
                         node.z()
                 );
 
-                requestChunk(start);
+                requestChunkStructure(start);
             }
         }
 
-        private void requestChunk(ChunkPos pos) {
-            if (pendingChunks.containsKey(pos)) {
+        private void requestChunkFeature(ChunkPos pos) {
+            if (pendingChunksFeature.containsKey(pos)) {
                 return;
             }
 
@@ -238,14 +265,48 @@ public final class SearchManager {
                     manager.getChunkFutureSyncOnMainThread(
                             pos.x,
                             pos.z,
-                            ChunkStatus.STRUCTURE_REFERENCES,
+                            ChunkStatus.FEATURES,
+                            true
+
+                    );
+
+            pendingChunksFeature.put(pos, future);
+        }
+
+        private void requestChunkStructure(ChunkPos pos) {
+            if (pendingChunksStructure.containsKey(pos)) {
+                return;
+            }
+
+            ServerChunkManager manager = world.getChunkManager();
+
+            CompletableFuture<OptionalChunk<Chunk>> future =
+                    manager.getChunkFutureSyncOnMainThread(
+                            pos.x,
+                            pos.z,
+                            ChunkStatus.STRUCTURE_STARTS,
                             true
                     );
 
-            pendingChunks.put(pos, future);
+            pendingChunksStructure.put(pos, future);
         }
 
         private void CheckChunk(Chunk chunk) {
+            if (chunk == null) {
+                return;
+            }
+
+            StructureStart structureStart = chunk.getStructureStart(hut);
+
+
+            if (structureStart == null || !structureStart.hasChildren()) {
+                return;
+            }
+
+            requestChunkFeature(chunk.getPos());
+        }
+
+        private void CheckChunkHight(Chunk chunk) {
             if (chunk == null) {
                 return;
             }
@@ -256,17 +317,6 @@ public final class SearchManager {
                 return;
             }
 
-            Chunk chunkFull = world.getChunk(chunk.getPos().x, chunk.getPos().z, ChunkStatus.FEATURES, true);
-
-            if(chunkFull == null) {
-                return;
-            }
-
-            structureStart = chunkFull.getStructureStart(hut);
-
-            if(structureStart == null) {
-                return;
-            }
             checkedCandidates++;
             BlockBox box = structureStart.getBoundingBox();
             int centerY = box.getMaxY();
