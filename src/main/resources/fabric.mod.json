@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "witch_hunt",
+  "version": "${version}",
+  "name": "Witch Hunt",
+  "description": "Findet die nächstgelegene Witch Hut mit Bounding-Box-Mittelpunkt unter Y=0.",
+  "authors": ["Johannes"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "de.johannes.witchhunt.WitchHunt"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "1.21.11",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
