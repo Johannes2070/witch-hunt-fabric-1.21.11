@@ -238,7 +238,7 @@ public final class SearchManager {
                     manager.getChunkFutureSyncOnMainThread(
                             pos.x,
                             pos.z,
-                            ChunkStatus.STRUCTURE_STARTS,
+                            ChunkStatus.STRUCTURE_REFERENCES,
                             true
                     );
 
@@ -249,12 +249,24 @@ public final class SearchManager {
             if (chunk == null) {
                 return;
             }
+
             StructureStart structureStart = chunk.getStructureStart(hut);
 
             if (structureStart == null || !structureStart.hasChildren()) {
                 return;
             }
 
+            Chunk chunkFull = world.getChunk(chunk.getPos().x, chunk.getPos().z, ChunkStatus.FEATURES, true);
+
+            if(chunkFull == null) {
+                return;
+            }
+
+            structureStart = chunkFull.getStructureStart(hut);
+
+            if(structureStart == null) {
+                return;
+            }
             checkedCandidates++;
             BlockBox box = structureStart.getBoundingBox();
             int centerY = box.getMaxY();
