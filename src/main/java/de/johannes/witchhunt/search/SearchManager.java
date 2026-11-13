@@ -4,6 +4,8 @@ import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
+import net.minecraft.server.world.OptionalChunk;
+import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StructureSet;
 import net.minecraft.structure.StructureSetKeys;
@@ -19,9 +21,9 @@ import net.minecraft.world.gen.chunk.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.gen.structure.Structure;
 import net.minecraft.world.gen.structure.StructureKeys;
 
-import java.util.HashSet;
-import java.util.PriorityQueue;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 public final class SearchManager {
     private static SearchSession active;
@@ -120,8 +122,11 @@ public final class SearchManager {
         private final int originChunkZ;
         private final int spacing;
 
+        private static final int MAX_PENDING_CHUNKS = 16;
+
         private final PriorityQueue<RegionNode> queue = new PriorityQueue<>();
         private final Set<RegionKey> queued = new HashSet<>();
+        private final Map<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>> pendingChunks =new HashMap<>();
 
         private long checkedChunks;
         private long checkedCandidates;
@@ -163,65 +168,123 @@ public final class SearchManager {
                 finishWithResult();
                 return;
             }
+            processCompletedChunks();
+            submitChunkRequests();
+        }
 
-            RegionNode node = queue.poll();
-            checkedChunks++;
+        private void processCompletedChunks() {
+            Iterator<Map.Entry<ChunkPos, CompletableFuture<OptionalChunk<Chunk>>>> iterator =
+                    pendingChunks.entrySet().iterator();
 
-            ChunkPos start = placement.getStartChunk(seed, node.x(), node.z());
-            Chunk chunk = world.getChunk(start.x, start.z, ChunkStatus.STRUCTURE_STARTS, true);
+            while (iterator.hasNext()) {
+                var entry = iterator.next();
 
-            if (chunk != null) {
-                StructureStart structureStart = chunk.getStructureStart(hut);
+                CompletableFuture<OptionalChunk<Chunk>> future = entry.getValue();
 
-                if (structureStart != null && structureStart.hasChildren()) {
-                    checkedCandidates++;
-                    BlockBox box = structureStart.getBoundingBox();
-                    int centerY = box.getMaxY();
+                if (!future.isDone()) {
+                    continue;
+                }
 
-                    if (bestY == null || centerY < bestY) {
+                checkedChunks++;
 
-                        int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
-                        int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
+                if (checkedChunks % 1000000 == 0) {
+                    long count = checkedChunks;
+                    source.sendFeedback(() -> Text.literal("Witch Hunt: " + count
+                            + " Startregionen untersucht; " + checkedCandidates + " Kandidaten geprüft."), false);
+                }
 
-                        long dx = (long) centerX - originX;
-                        long dz = (long) centerZ - originZ;
-                        long distanceSquared = dx * dx + dz * dz;
+                iterator.remove();
 
+                try {
+                    OptionalChunk<Chunk> optional = future.join();
+
+                    optional.ifPresent(this::CheckChunk);
+
+                } catch (CompletionException exception) {
+                    source.sendError(Text.literal(
+                            "Fehler beim Laden eines Chunks: " + exception.getMessage()
+                    ));
+                }
+            }
+        }
+
+        private void submitChunkRequests() {
+            while (pendingChunks.size() < MAX_PENDING_CHUNKS && !queue.isEmpty()) {
+                RegionNode node = queue.poll();
+
+                addRegion(node.x() - 1, node.z());
+                addRegion(node.x() + 1, node.z());
+                addRegion(node.x(), node.z() - 1);
+                addRegion(node.x(), node.z() + 1);
+
+                ChunkPos start = placement.getStartChunk(
+                        seed,
+                        node.x(),
+                        node.z()
+                );
+
+                requestChunk(start);
+            }
+        }
+
+        private void requestChunk(ChunkPos pos) {
+            if (pendingChunks.containsKey(pos)) {
+                return;
+            }
+
+            ServerChunkManager manager = world.getChunkManager();
+
+            CompletableFuture<OptionalChunk<Chunk>> future =
+                    manager.getChunkFutureSyncOnMainThread(
+                            pos.x,
+                            pos.z,
+                            ChunkStatus.STRUCTURE_STARTS,
+                            true
+                    );
+
+            pendingChunks.put(pos, future);
+        }
+
+        private void CheckChunk(Chunk chunk) {
+            if (chunk == null) {
+                return;
+            }
+            StructureStart structureStart = chunk.getStructureStart(hut);
+
+            if (structureStart == null || !structureStart.hasChildren()) {
+                return;
+            }
+
+            checkedCandidates++;
+            BlockBox box = structureStart.getBoundingBox();
+            int centerY = box.getMaxY();
+
+            if(bestY == null || centerY <= bestY){
+
+                int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
+                int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
+
+                long dx = (long) centerX - originX;
+                long dz = (long) centerZ - originZ;
+                long distanceSquared = dx * dx + dz * dz;
+
+                if (bestY != null && centerY == bestY) {
+                    if (distanceSquared < bestDistanceSquared) {
+                        bestDistanceSquared = distanceSquared;
                         best = new SearchResult(centerX, centerY, centerZ,
                                 box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY(),
                                 box.getMinZ(), box.getMaxZ(), distanceSquared);
 
                         printResult(best);
-                    }else if (centerY == bestY) {
-
-                        int centerX = Math.floorDiv(box.getMinX() + box.getMaxX(), 2);
-                        int centerZ = Math.floorDiv(box.getMinZ() + box.getMaxZ(), 2);
-
-                        long dx = (long) centerX - originX;
-                        long dz = (long) centerZ - originZ;
-                        long distanceSquared = dx * dx + dz * dz;
-
-                        if (distanceSquared < bestDistanceSquared) {
-                            bestDistanceSquared = distanceSquared;
-                            best = new SearchResult(centerX, centerY, centerZ,
-                                    box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY(),
-                                    box.getMinZ(), box.getMaxZ(), distanceSquared);
-
-                            printResult(best);
-                        }
                     }
+                }else {
+                    bestY = centerY;
+                    best = new SearchResult(centerX, centerY, centerZ,
+                            box.getMinX(), box.getMaxX(), box.getMinY(), box.getMaxY(),
+                            box.getMinZ(), box.getMaxZ(), distanceSquared);
+
+                    printResult(best);
                 }
-            }
-
-            addRegion(node.x() - 1, node.z());
-            addRegion(node.x() + 1, node.z());
-            addRegion(node.x(), node.z() - 1);
-            addRegion(node.x(), node.z() + 1);
-
-            if (checkedChunks % 1000 == 0) {
-                long count = checkedChunks;
-                source.sendFeedback(() -> Text.literal("Witch Hunt: " + count
-                        + " Startregionen untersucht; " + checkedCandidates + " Kandidaten geprüft."), false);
             }
         }
 
