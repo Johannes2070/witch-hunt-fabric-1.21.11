@@ -21,6 +21,10 @@ public final class Point2DSet {
         return Point2DSetInternal.toArray(new Point2D[0]);
     }
 
+    public int Size(){
+        return Point2DSetInternal.size();
+    }
+
     @Override
     public boolean equals(Object obj) {
         if (this == obj) return true;
