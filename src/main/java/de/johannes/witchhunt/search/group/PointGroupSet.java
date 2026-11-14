@@ -32,4 +32,12 @@ public class PointGroupSet {
 
         return addedGroups;
     }
+
+    public List<Point2DSet> GetGroups() {
+        List<Point2DSet> Groups = new ArrayList<>(this.Groups);
+        Groups.sort(
+                Comparator.comparingInt(Point2DSet::Size).reversed()
+        );
+        return Groups;
+    }
 }
