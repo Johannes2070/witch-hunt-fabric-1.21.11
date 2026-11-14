@@ -67,7 +67,7 @@ public final class SearchManager {
             case height ->  active = new SearchSessionHeight(source, world, hut, placement,
                     world.getSeed(), playerBlockX, playerBlockZ,
                     playerChunkX, playerChunkZ);
-            case group -> active = new SearchSessionHeight(source, world, hut, placement,
+            case group -> active = new SearchSessionGroup(source, world, hut, placement,
                     world.getSeed(), playerBlockX, playerBlockZ,
                     playerChunkX, playerChunkZ);
         }
