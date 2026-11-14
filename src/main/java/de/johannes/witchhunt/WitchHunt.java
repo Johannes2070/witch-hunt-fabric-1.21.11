@@ -16,30 +16,29 @@ public final class WitchHunt implements ModInitializer {
     public void onInitialize() {
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(CommandManager.literal("witchhunt")
-                .executes(context -> start(context.getSource()))
                 .then(CommandManager.literal("cancel")
                     .executes(context -> SearchManager.cancel(context.getSource())))
                 .then(CommandManager.literal("status")
                     .executes(context -> SearchManager.status(context.getSource())))
+                .then(CommandManager.literal("start")
+                    .then(CommandManager.literal("height")
+                        .executes(context -> start(context.getSource(), SearchManager.SearchMode.height)))
+                    .then(CommandManager.literal("group")
+                        .executes(context -> start(context.getSource(), SearchManager.SearchMode.group))))
             )
         );
 
         ServerTickEvents.END_SERVER_TICK.register(SearchManager::tick);
     }
 
-    private static int start(ServerCommandSource source) {
+    private static int start(ServerCommandSource source, SearchManager.SearchMode mode) {
         MinecraftServer server = source.getServer();
-
-        if (server.isDedicated()) {
-            source.sendError(Text.literal("Witch Hunt ist für Singleplayer-Welten vorgesehen."));
-            return 0;
-        }
 
         if (source.getEntity() == null) {
             source.sendError(Text.literal("Der Befehl muss von einem Spieler ausgeführt werden."));
             return 0;
         }
 
-        return SearchManager.start(source);
+        return SearchManager.start(source,mode);
     }
 }
