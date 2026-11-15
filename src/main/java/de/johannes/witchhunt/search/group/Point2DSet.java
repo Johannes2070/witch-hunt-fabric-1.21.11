@@ -38,12 +38,11 @@ public final class Point2DSet {
         return Point2DSetInternal.hashCode();
     }
 
-    public double GetWelzlRadius(){
+    public Circle GetWelzl(){
         List<Point2D> shuffled = new ArrayList<>(Point2DSetInternal);
         Collections.shuffle(shuffled);
 
-        Circle result = welzl(shuffled, new ArrayList<>());
-        return result.radius();
+        return welzl(shuffled, new ArrayList<>());
     }
 
     private Circle welzl(List<Point2D> points, List<Point2D> boundary) {

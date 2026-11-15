@@ -15,7 +15,7 @@ public class PointGroupSet {
 
         for (Point2DSet existingSet : existingSets) {
             Point2DSet tempSet = new Point2DSet(existingSet,p);
-            if (tempSet.GetWelzlRadius() < 128){
+            if (tempSet.GetWelzl().radius() < 128){
                 if (Groups.add(tempSet)) {
                     addedGroups.add(tempSet);
                 }
@@ -26,18 +26,10 @@ public class PointGroupSet {
             addedGroups.add(newSet);
         }
 
-        addedGroups.sort(
-                Comparator.comparingInt(Point2DSet::Size).reversed()
-        );
-
         return addedGroups;
     }
 
     public List<Point2DSet> GetGroups() {
-        List<Point2DSet> Groups = new ArrayList<>(this.Groups);
-        Groups.sort(
-                Comparator.comparingInt(Point2DSet::Size).reversed()
-        );
-        return Groups;
+        return new ArrayList<>(this.Groups);
     }
 }

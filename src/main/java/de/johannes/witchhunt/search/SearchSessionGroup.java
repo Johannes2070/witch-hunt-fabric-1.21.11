@@ -2,9 +2,14 @@
 package de.johannes.witchhunt.search;
 
 import com.google.common.base.Stopwatch;
+import de.johannes.witchhunt.search.group.Point2D;
+import de.johannes.witchhunt.search.group.Point2DSet;
+import de.johannes.witchhunt.search.group.PointGroupSet;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StructureStart;
+import net.minecraft.text.ClickEvent;
+import net.minecraft.text.HoverEvent;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockBox;
 import net.minecraft.util.math.ChunkPos;
@@ -43,20 +48,16 @@ public class SearchSessionGroup implements SearchSessionInterface {
     private long checkedChunks;
     private long checkedCandidates;
 
+    private final PointGroupSet WitchHuts = new PointGroupSet();
+
     // ---------------------------------------------------------
     // Witch Hut data
     // ---------------------------------------------------------
 
-    private final List<HutPoint> huts = new ArrayList<>();
 
     // Alle bereits berechneten möglichen Sphere-Mittelpunkte.
-    private final List<SphereCandidate> sphereCandidates =
-            new ArrayList<>();
+    private int sphereCandidates = 0;
 
-    // Nur Gruppen mit der aktuell größten Größe.
-    // BitSet identifiziert eine Gruppe anhand ihrer Hut-Indizes.
-    private final Map<BitSet, GroupResult> bestGroups =
-            new HashMap<>();
 
     private int bestGroupSize = 0;
 
@@ -183,8 +184,68 @@ public class SearchSessionGroup implements SearchSessionInterface {
     // ---------------------------------------------------------
 
     public void addHut(BlockBox box) {
+        var added = WitchHuts.Add(new Point2D(box.getMaxX(),box.getMaxZ()));
 
+        if (added.isEmpty()){
+            return;
+        }
+
+        checkedCandidates++;
+
+        for (Point2DSet point2DSet : added) {
+            if (point2DSet.Size()>bestGroupSize) {
+                sphereCandidates = 0;
+                bestGroupSize++;
+                break;
+            }
+        }
+
+        for (Point2DSet point2DSet : added) {
+            if (point2DSet.Size() == bestGroupSize) {
+                sphereCandidates++;
+                ReportWitchHut(point2DSet);
+            }
+        }
     }
+
+    private void ReportWitchHut(Point2DSet hut) {
+
+        Point2D mid = hut.GetWelzl().center();
+        int size = hut.Size();
+
+        int x = (int) Math.round(mid.x());
+        int z = (int) Math.round(mid.z());
+
+        Text message = Text.empty()
+                .append(Text.literal("§6Witch Hut gefunden!\n"))
+
+                .append(Text.literal("§7Koordinaten: "))
+                .append(Text.literal("§eX: " + x + " Z: " + z + "\n"))
+
+                .append(Text.literal("§7Größe: "))
+                .append(Text.literal("§e" + size + " Huts\n"))
+
+                .append(
+                        Text.literal("§a[Hierher teleportieren]")
+                                .styled(style -> style
+                                        .withClickEvent(
+                                                new ClickEvent.RunCommand(
+                                                        "/tp @s " + x + " ~ " + z
+                                                )
+                                        )
+                                        .withHoverEvent(
+                                                new HoverEvent.ShowText(
+                                                        Text.literal(
+                                                                "Zu dieser Witch Hut teleportieren"
+                                                        )
+                                                )
+                                        )
+                                )
+                );
+
+        source.sendFeedback(() -> message, false);
+    }
+
 
     // ---------------------------------------------------------
     // Stop and report all best groups
@@ -201,6 +262,12 @@ public class SearchSessionGroup implements SearchSessionInterface {
         source.sendFeedback(() -> Text.literal(
                 "§6Witch-Hunt-Suche beendet!"
         ), false);
+
+        for (Point2DSet group : WitchHuts.GetGroups()) {
+            if (group.Size() == bestGroupSize) {
+                ReportWitchHut(group);
+            }
+        }
     }
 
 
@@ -235,7 +302,7 @@ public class SearchSessionGroup implements SearchSessionInterface {
                         + ", bisherige Witch-Hut-Kandidaten: "
                         + checkedCandidates
                         + ", Sphere-Kandidaten: "
-                        + sphereCandidates.size()
+                        + sphereCandidates
                         + ", größte Gruppe: "
                         + bestGroupSize
                         + ". Suchzentrum: X "
@@ -273,7 +340,6 @@ public class SearchSessionGroup implements SearchSessionInterface {
                 StructureStart structureStart = chunk.getStructureStart(hut);
 
                 if (structureStart != null && structureStart.hasChildren()) {
-                    checkedCandidates++;
                     addHut(structureStart.getBoundingBox());
                 }
             }
